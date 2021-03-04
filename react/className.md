@@ -1,4 +1,4 @@
-###### 为什么 jsx 中要把 class 写成 className?
+# 为什么 jsx 中要把 class 写成 className?
 
 ---
 
