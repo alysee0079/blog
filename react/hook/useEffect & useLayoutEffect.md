@@ -26,8 +26,8 @@
 3.useLayoutEffect 会阻塞浏览器渲染;
 4.将修改 DOM 的操作放到 useLayoutEffect里, 可以减少回流、重绘;
 
-#### effect是如何读取到最新的count 状态值？
-1.React会记住你提供的effect函数，并且会在每次更改作用于DOM并让浏览器绘制屏幕后去调用它;
+#### effect 是如何读取到最新的count 状态值？
+1.React会记住你提供的 effect 函数，并且会在每次更改作用于DOM并让浏览器绘制屏幕后去调用它;
 2.所以虽然我们说的是一个 effect（这里指更新document的title），但其实每次渲染都是一个不同的函数 — 并且每个effect函数“看到”的props和state都来自于它属于的那次特定渲染;
 3.组件内的每一个函数（包括事件处理函数，effects，定时器或者API调用等等）会捕获定义它们的那次渲染中的props和state;
 
