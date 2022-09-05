@@ -14,9 +14,9 @@ export function scheduleUpdateOnFiber(fiber: Fiber, lane: Lane, eventTime: numbe
   // ... 省略部分无关代码
   const root = markUpdateLaneFromFiberToRoot(fiber, lane)
   if (lane === SyncLane) {
+    // 是否非批处理, 是否未渲染或者提交
     if ((executionContext & LegacyUnbatchedContext) !== NoContext && (executionContext & (RenderContext | CommitContext)) === NoContext) {
-      // legacy或blocking模式
-      // 直接进行`fiber构造`
+      // legacy 或 blocking模式, 直接进行 fiber 构造
       performSyncWorkOnRoot(root)
     } else {
       // 后续的更新
