@@ -6,7 +6,7 @@
 
 1. `ReactDOM(Blocking)Root`对象
 
-- 属于 react-dom 包, 该对象暴露有 render, unmount 方法, 通过调用该实例的 render 方法, 可以引导 react 应用的启动. \_internalRoot 指向 fiberRoot 对象.
+- 属于 react-dom 包, 该对象暴露有 render, unmount 方法, 通过调用该实例的 render 方法, 可以引导 react 应用的启动. internalRoot 指向 fiberRoot 对象.
 
 2. `fiberRoot` 对象
 
@@ -76,7 +76,7 @@
 
 ReactDOMRoot 和 ReactDOMBlockingRoot 有相同的特性
 
-1. 调用 `createRootImpl` 创建 `fiberRoo` t 对象, 并将其挂载到 `this._internalRoot` 上.
+1. 调用 `createRootImpl` 创建 `fiberRoot` 对象, 并将其挂载到 `this._internalRoot` 上.
 2. 原型上有 `render` 和 `unmount` 方法, 且内部都会调用 `updateContainer` 进行更新.
 
 #### 2.调用更新入口
@@ -129,12 +129,15 @@ export function updateContainer(element: ReactNodeList, container: OpaqueRoot, p
   const lane = requestUpdateLane(current)
 
   // 2. 设置fiber.updateQueue
+  // 根据车道优先级, 创建 update 对象
   const update = createUpdate(eventTime, lane)
+  // 储存作为渲染的 reactElement 对象(从 App 开始)
   update.payload = { element }
   callback = callback === undefined ? null : callback
   if (callback !== null) {
     update.callback = callback
   }
+  // 将 update 加入 rootFiber(fiber.updateQueue.pending 队列)
   enqueueUpdate(current, update)
 
   // 3. 进入reconciler运作流程中的`输入`环节
