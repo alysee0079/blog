@@ -58,7 +58,8 @@ function performSyncWorkOnRoot(root) {
   let exitStatus
 
   lanes = getNextLanes(root, NoLanes)
-  // 1. fiber树构造
+  // 1. fiber树构造(经过beginWork, completeWork)
+  // 这个过程单独在 fiber 流程梳理
   exitStatus = renderRootSync(root, lanes)
 
   // 2. 异常处理: 有可能fiber构造过程中出现异常
