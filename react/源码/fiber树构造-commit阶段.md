@@ -128,10 +128,10 @@ function commitRootImpl(root, renderPriorityLevel) {
 整个渲染过程被分为 3 个函数分布实现:
 
 1.commitBeforeMutationEffects
-    - dom 变更之前, 处理副作用队列中带有Snapshot,Passive标记的fiber节点.
+    - dom 变更之前, 处理副作用队列中带有 Snapshot, Passive 标记的fiber节点.
 
 2.commitMutationEffects
-    - dom 变更, 界面得到更新. 处理副作用队列中带有Placement, Update, Deletion, Hydrating标记的fiber节点.
+    - dom 变更, 界面得到更新. 处理副作用队列中带有Placement, Update(useLayoutEffect 执行销毁函数), Deletion, Hydrating标记的fiber节点.
 
 3.commitLayoutEffects
     - dom 变更后, 处理副作用队列中带有Update | Callback标记的fiber节点.
@@ -179,11 +179,11 @@ function commitBeforeMutationEffects() {
     if ((flags & Passive) !== NoFlags) {
       // If there are passive effects, schedule a callback to flush at
       // the earliest opportunity.
-      // Passive标记只在使用了hook, useEffect会出现. 所以此处是针对hook对象的处理
+      // Passive 标记只在使用了 hook, useEffect 会出现.(添加 useEffect 到任务队列)
       if (!rootDoesHavePassiveEffects) {
         rootDoesHavePassiveEffects = true;
         scheduleCallback(NormalPriority$1, function () {
-          flushPassiveEffects();
+          flushPassiveEffects(); // 执行 effect 回调函数
           return null;
         });
       }
@@ -306,7 +306,38 @@ function commitMutationEffects(root, renderPriorityLevel) {
 1.新增: 函数调用栈 commitPlacement -> insertOrAppendPlacementNode -> appendChild
 
 2.更新: 函数调用栈 commitWork -> commitUpdate
+```javascript
+function commitWork(current, finishedWork) {
+  switch (finishedWork.tag) {
+    case FunctionComponent:
+      // 当fiber.tag为FunctionComponent，会调用commitHookEffectListUnmount.
+      // 该方法会遍历effectList，执行所有useLayoutEffect hook的销毁函数.
+      commitHookEffectListUnmount(Layout | HasEffect, finishedWork);
+      return
+    case HostComponent:
+    var instance = finishedWork.stateNode;
 
+        if (instance != null) {
+          // Commit the work prepared earlier.
+          var newProps = finishedWork.memoizedProps; // For hydration we reuse the update path but we treat the oldProps
+          // as the newProps. The updatePayload will contain the real change in
+          // this case.
+
+          var oldProps = current !== null ? current.memoizedProps : newProps;
+          var type = finishedWork.type; // TODO: Type the updateQueue to be specific to host components.
+
+          var updatePayload = finishedWork.updateQueue;
+          finishedWork.updateQueue = null;
+
+          if (updatePayload !== null) {
+            commitUpdate(instance, updatePayload, type, oldProps, newProps);
+          }
+        }
+
+        return;
+  }
+}
+```
 3.删除: 函数调用栈 commitDeletion -> removeChild
 
 最终会调用 appendChild, commitUpdate, removeChild 这些 react-dom 包中的函数. 它们是 HostConfig 协议(源码在 ReactDOMHostConfig.js 中)中规定的标准函数, 在渲染器react-dom包中进行实现. 这些函数就是直接操作 DOM, 所以执行之后, 界面也会得到更新.
@@ -323,7 +354,7 @@ function commitLayoutEffects(root, committedLanes) {
     setCurrentFiber(nextEffect);
     var flags = nextEffect.flags;
 
-    // 处理 Update和Callback 标记
+    // 处理 Update 和 Callback 标记(调用生命周期钩子和hook)(销毁上次的回调是在渲染中阶段 commitWork 中执行)
     if (flags & (Update | Callback)) {
       var current = nextEffect.alternate;
       commitLifeCycles(root, current, nextEffect);
