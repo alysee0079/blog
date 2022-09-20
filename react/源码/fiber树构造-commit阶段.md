@@ -357,6 +357,90 @@ function commitLayoutEffects(root, committedLanes) {
 
 核心处理在 commitLifeCycles 函数中:
 
+```javascript
+function commitLifeCycles(finishedRoot, current, finishedWork, committedLanes) {
+  switch (finishedWork.tag) {
+    case FunctionComponent:
+    case ForwardRef:
+    case SimpleMemoComponent:
+    case Block: {
+      // At this point layout effects have already been destroyed (during mutation phase).
+      // This is done to prevent sibling component effects from interfering with each other,
+      // e.g. a destroy function in one component should never override a ref set
+      // by a create function in another component during the same commit.
+      {
+        // 执行 useLayoutEffect 的回调函数(同步执行, 此时 dom 已经是最新, 但是页面还未渲染最新的 dom)
+        commitHookEffectListMount(Layout | HasEffect, finishedWork)
+      }
+      // 调度 useEffect 的销毁函数与回调函数(异步)
+      // 向 pendingPassiveHookEffectsUnmount 和 pendingPassiveHookEffectsMount 中 push effect
+      schedulePassiveEffects(finishedWork)
+      return
+    }
+    case ClassComponent: {
+      var instance = finishedWork.stateNode
+      if (finishedWork.flags & Update) {
+        // 内存中没有对应的 fiber, 说明是初次挂载
+        if (current === null) {
+          // 触发 componentDidMount 生命周期
+          instance.componentDidMount()
+        } else {
+          // 触发 componentDidUpdate 生命周期
+          instance.componentDidUpdate(prevProps, prevState, instance.__reactInternalSnapshotBeforeUpdate)
+        }
+      } // TODO: I think this is now always non-null by the time it reaches the
+      // commit phase. Consider removing the type check.
+      var updateQueue = finishedWork.updateQueue
+      if (updateQueue !== null) {
+        // 触发 setState 的回调函数
+        commitUpdateQueue(finishedWork, updateQueue, instance)
+      }
+      return
+    }
+    case HostRoot: {
+      // TODO: I think this is now always non-null by the time it reaches the
+      // commit phase. Consider removing the type check.
+      var _updateQueue = finishedWork.updateQueue
+      if (_updateQueue !== null) {
+        var _instance = null
+        if (finishedWork.child !== null) {
+          switch (finishedWork.child.tag) {
+            case HostComponent:
+              _instance = getPublicInstance(finishedWork.child.stateNode)
+              break
+            case ClassComponent:
+              _instance = finishedWork.child.stateNode
+              break
+          }
+        }
+        // 触发回调函数
+        commitUpdateQueue(finishedWork, _updateQueue, _instance)
+      }
+      return
+    }
+    case HostComponent: {
+      var _instance2 = finishedWork.stateNode // Renderers may schedule work to be done after host components are mounted
+      // (eg DOM renderer may schedule auto-focus for inputs and form controls).
+      // These effects should only be committed when components are first mounted,
+      // aka when there is no current/alternate.
+
+      if (current === null && finishedWork.flags & Update) {
+        var type = finishedWork.type
+        var props = finishedWork.memoizedProps
+        commitMount(_instance2, type, props)
+      }
+      return
+    }
+  }
+
+  {
+    {
+      throw Error('This unit of work tag should not have side-effects. This error is likely caused by a bug in React. Please file an issue.')
+    }
+  }
+}
+```
+
 1.对于 ClassComponent 节点, 调用生命周期函数 componentDidMount 或 componentDidUpdate, 调用 update.callback 回调函数.
 
 2.对于 HostComponent 节点, 如有 Update 标记, 需要设置一些原生状态(如: focus 等)
