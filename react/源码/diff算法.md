@@ -83,44 +83,72 @@ if (isObject) {
 让我们看看第二步`判断 DOM 节点是否可以复用`是如何实现的。
 
 ```javascript
-function reconcileSingleElement(returnFiber: Fiber, currentFirstChild: Fiber | null, element: ReactElement): Fiber {
-  const key = element.key
-  let child = currentFirstChild
+function reconcileSingleElement(returnFiber, currentFirstChild, element, lanes) {
+  var key = element.key
+  var child = currentFirstChild
 
+  // currentFirstChild !== null, 表明是对比更新阶段
+  // 遍历 child 树, 直到没有为止(此场景主要是: 更新前有多个节点, 更新后只有一个节点, 需要轮流对比)
   // 首先判断是否存在对应DOM节点
   while (child !== null) {
+    // the first item in the list.
     // 上一次更新存在DOM节点，接下来判断是否可复用
 
     // 首先比较key是否相同
     if (child.key === key) {
-      // key相同，接下来比较type是否相同
-
+      // 1. key相同, 进一步判断 child.elementType === element.type
       switch (child.tag) {
-        // ...省略case
-
         default: {
-          if (child.elementType === element.type) {
-            // type相同则表示可以复用
-            // 返回复用的fiber
-            return existing
-          }
+          if (
+            child.elementType === element.type || // Keep this check inline so it only runs on the false path:
+            isCompatibleFamilyForHotReloading(child, element)
+          ) {
+            // 1.1 elementType 相同, 如果有兄弟节点, 需要给兄弟节点打上Deletion标记
+            deleteRemainingChildren(returnFiber, child.sibling)
 
-          // type不同则跳出switch
+            // 1.2 构造fiber节点, 新的fiber对象会复用current.stateNode, 即可复用DOM对象
+            var _existing3 = useFiber(child, element.props)
+
+            _existing3.ref = coerceRef(returnFiber, child, element)
+            _existing3.return = returnFiber
+
+            {
+              _existing3._debugSource = element._source
+              _existing3._debugOwner = element._owner
+            }
+
+            // 返回复用的 fiber
+            return _existing3
+          }
+          // elementType 不同, 跳出 switch
           break
         }
       }
-      // 代码执行到这里代表：key相同但是type不同
-      // 将该fiber及其兄弟fiber标记为删除
+
+      // key 相同, elementType 不同. 给当前节点以及兄弟节点打上Deletion标记
       deleteRemainingChildren(returnFiber, child)
-      break
+      break // 结束 while 循环, 创建新的 fiber
     } else {
-      // key不同，将该fiber标记为删除
+      // key 不同, 给 current 节点打上删除标记, 继续循环对比, 如果对比不到, 创建新 fiber
       deleteChild(returnFiber, child)
     }
+
+    // 如果 current fiber 有兄弟节点, 获取下一个兄弟 fiber 继续对比
     child = child.sibling
   }
 
-  // 创建新Fiber，并返回 ...省略
+  // 新建 fiber 节点
+  if (element.type === REACT_FRAGMENT_TYPE) {
+    var created = createFiberFromFragment(element.props.children, returnFiber.mode, lanes, element.key)
+    created.return = returnFiber
+    return created
+  } else {
+    var _created4 = createFiberFromElement(element, returnFiber.mode, lanes)
+
+    _created4.ref = coerceRef(returnFiber, currentFirstChild, element)
+    _created4.return = returnFiber
+    return _created4
+  }
 }
 ```
 
@@ -177,7 +205,7 @@ ul > p
 
 基于以上原因，Diff 算法的整体逻辑会经历两轮遍历：
 
-第一轮遍历：处理更新的节点。
+第一轮遍历：处理更新的节点(节点属性, 类型变化)。
 
 第二轮遍历：处理剩下的不属于更新的节点(增, 删, 移)。
 
@@ -267,22 +295,24 @@ ul > p
 
 ##### 处理移动的节点
 
-为了快速的找到key对应的oldFiber，我们将所有还未处理的oldFiber存入以key为key，oldFiber为value的Map中。
+为了快速的找到 key 对应的 oldFiber，我们将所有还未处理的 oldFiber 存入以 key 为 key，oldFiber 为 value 的 Map 中。
+
 ```javascript
-const existingChildren = mapRemainingChildren(returnFiber, oldFiber);
+const existingChildren = mapRemainingChildren(returnFiber, oldFiber)
 ```
-接下来遍历剩余的newChildren，通过newChildren[i].key就能在existingChildren中找到key相同的oldFiber。
+
+接下来遍历剩余的 newChildren，通过 newChildren[i].key 就能在 existingChildren 中找到 key 相同的 oldFiber。
 
 ##### 标记节点是否移动
 
 既然我们的目标是寻找移动的节点，那么我们需要明确：节点是否移动是以什么为参照物？
 
-我们的参照物是：最后一个可复用的节点在oldFiber中的位置索引（用变量lastPlacedIndex表示）。
+我们的参照物是：最后一个可复用的节点在 oldFiber 中的位置索引（用变量 lastPlacedIndex 表示）。
 
-由于本次更新中节点是按newChildren的顺序排列。在遍历newChildren过程中，每个遍历到的可复用节点一定是当前遍历到的所有可复用节点中最靠右的那个，即一定在lastPlacedIndex对应的可复用的节点在本次更新中位置的后面。
+由于本次更新中节点是按 newChildren 的顺序排列。在遍历 newChildren 过程中，每个遍历到的可复用节点一定是当前遍历到的所有可复用节点中最靠右的那个，即一定在 lastPlacedIndex 对应的可复用的节点在本次更新中位置的后面。
 
-那么我们只需要比较遍历到的可复用节点在上次更新时是否也在lastPlacedIndex对应的oldFiber后面，就能知道两次更新中这两个节点的相对位置改变没有。
+那么我们只需要比较遍历到的可复用节点在上次更新时是否也在 lastPlacedIndex 对应的 oldFiber 后面，就能知道两次更新中这两个节点的相对位置改变没有。
 
-我们用变量oldIndex表示遍历到的可复用节点在oldFiber中的位置索引。如果oldIndex < lastPlacedIndex，代表本次更新该节点需要向右移动。
+我们用变量 oldIndex 表示遍历到的可复用节点在 oldFiber 中的位置索引。如果 oldIndex < lastPlacedIndex，代表本次更新该节点需要向右移动。
 
-lastPlacedIndex初始为0，每遍历一个可复用的节点，如果oldIndex >= lastPlacedIndex，则lastPlacedIndex = oldIndex。
+lastPlacedIndex 初始为 0，每遍历一个可复用的节点，如果 oldIndex >= lastPlacedIndex，则 lastPlacedIndex = oldIndex。
