@@ -205,11 +205,141 @@ ul > p
 
 基于以上原因，Diff 算法的整体逻辑会经历两轮遍历：
 
-第一轮遍历：处理更新的节点(节点属性, 类型变化)。
+第一轮遍历：处理更新的节点(节点属性, 类型变化).
 
-第二轮遍历：处理剩下的不属于更新的节点(增, 删, 移)。
+第二轮遍历：处理剩下的不属于更新的节点(增, 删, 移).
 
-##### 第一轮遍历
+```javascript
+  function reconcileChildrenArray(returnFiber, currentFirstChild, newChildren, lanes) {
+    var resultingFirstChild = null; // 处理完的 fiber 链表
+    var previousNewFiber = null; // 上次对比处理过的新节点(关联兄弟节点)
+    var oldFiber = currentFirstChild; // 正在对比的 current fiber
+    var lastPlacedIndex = 0; // 上一次匹配到的可复用节点在 oldFiber 中的 index
+    var newIdx = 0; // 当前遍历到的 jsx 的 index
+    var nextOldFiber = null; // 下一个要对比的 current fiber
+
+    /* 1. 第一轮遍历：处理更新的节点(节点属性, 类型变化) */
+    for (; oldFiber !== null && newIdx < newChildren.length; newIdx++) {
+      if (oldFiber.index > newIdx) {
+        nextOldFiber = oldFiber;
+        oldFiber = null;
+      } else {
+        // 储存将要匹配的下一个 oldFiber
+        nextOldFiber = oldFiber.sibling;
+      }
+      // new react element 和 old fiber 进行比较, 如果key不同, 返回null
+      // key 相同, 比较 type 是否一致. type 一致则执行 useFiber(update 逻辑), type 不一致则运行 createXXX(insert 逻辑)
+      var newFiber = updateSlot(returnFiber, oldFiber, newChildren[newIdx], lanes);
+
+      if (newFiber === null) {
+        if (oldFiber === null) {
+          oldFiber = nextOldFiber;
+        }
+        // newFiber 为 null 即 key 不同导致不可复用, 跳过 for 循环继续执行(key 不同可能是节点有删除,
+        // 移动操作, 不属于更新了, 所以放到第二轮遍历去处理)
+        break;
+      }
+
+      if (shouldTrackSideEffects) {
+        // 如果新的 fiber 节点没有通过复用老的 fiber 节点创建的, alternate 为 null, 此时要给老节点打上删除标记, 以后删除 current fiber
+        // 如果新的 fiber 节点是通过复用老的 fiber 节点创建的, alternate 不为 null, 保留 current fiber
+        if (oldFiber && newFiber.alternate === null) {
+          deleteChild(returnFiber, oldFiber);
+        }
+      }
+
+      // 更新本次遍历到的新节点对应在 oldFiber 中的位置, 新节点添加插入标记
+      lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx); 
+
+      if (previousNewFiber === null) {
+        // 第一次遍历时, previousNewFiber 为 null, 此时需要将第一个处理完的 fiber 赋值给 resultingFirstChild
+        resultingFirstChild = newFiber;
+      } else {
+        // 将新生成的 fiber 添加到已经处理后的 fiber 后面(变相更新 resultingFirstChild)
+        previousNewFiber.sibling = newFiber;
+      }
+
+      previousNewFiber = newFiber;
+      oldFiber = nextOldFiber;
+    }
+    /* 第一次遍历结束 */
+
+    /* 处理第一次遍历后的结果 */
+    // 如果 newChildren 序列被遍历完, 那么 oldFiber 序列中剩余节点都视为删除(处理结束, 返回 resultingFirstChild)
+    if (newIdx === newChildren.length) {
+      deleteRemainingChildren(returnFiber, oldFiber);
+      return resultingFirstChild;
+    }
+
+    // 如果 oldFiber 序列被遍历完, 那么 newChildren 序列中剩余节点都视为新增(处理结束, 返回 resultingFirstChild)
+    if (oldFiber === null) {
+      for (; newIdx < newChildren.length; newIdx++) {
+        // 剩余的节点创建 fiber
+        var _newFiber = createChild(returnFiber, newChildren[newIdx], lanes);
+
+        if (_newFiber === null) {
+          continue;
+        }
+
+        // 更新本次遍历到的新节点对应在 oldFiber 中的位置, 新节点添加插入标记
+        lastPlacedIndex = placeChild(_newFiber, lastPlacedIndex, newIdx);
+
+        if (previousNewFiber === null) {
+          resultingFirstChild = _newFiber;
+        } else {
+          // 将新生成的 fiber 添加到已经处理后的 fiber 后面(变相更新 resultingFirstChild)
+          previousNewFiber.sibling = _newFiber;
+        }
+
+        previousNewFiber = _newFiber;
+      }
+
+      return resultingFirstChild;
+    } 
+
+
+    // 获取 oldFiber 以后的 fiber, 以 oldFiber 的 key 为 key, oldFiber 为 value 组成 Map
+    var existingChildren = mapRemainingChildren(returnFiber, oldFiber); // Keep scanning and use the map to restore deleted items as moves.
+    /* 处理第一次遍历后的结果结束 */
+
+    // 2. 第二轮遍历：处理剩下的不属于更新的节点(增, 删, 移), 优先复用 oldFiber 序列中的节点
+    for (; newIdx < newChildren.length; newIdx++) {
+      // 从 existingChildren 匹配 key 复用/创建 fiber
+      var _newFiber2 = updateFromMap(existingChildren, returnFiber, newIdx, newChildren[newIdx], lanes);
+
+      if (_newFiber2 !== null) {
+        if (shouldTrackSideEffects) {
+          if (_newFiber2.alternate !== null) {
+            // 如果匹配到了 oldFiber, 将其从列表中删除
+            existingChildren.delete(_newFiber2.key === null ? newIdx : _newFiber2.key);
+          }
+        }
+
+        // 更新本次遍历到的新节点对应在 oldFiber 中的位置, 新节点添加插入标记
+        lastPlacedIndex = placeChild(_newFiber2, lastPlacedIndex, newIdx);
+
+        if (previousNewFiber === null) {
+          resultingFirstChild = _newFiber2;
+        } else {
+          previousNewFiber.sibling = _newFiber2;
+        }
+
+        previousNewFiber = _newFiber2;
+      }
+    }
+
+    if (shouldTrackSideEffects) {
+      // newChildren 已经遍历完, 那么 oldFiber 序列中剩余节点都视为删除(打上Deletion标记)
+      existingChildren.forEach(function (child) {
+        return deleteChild(returnFiber, child);
+      });
+    }
+
+    return resultingFirstChild;
+  }
+```
+
+##### 第一轮遍历, 处理更新的节点(节点属性, 类型变化)
 
 1.let i = 0，遍历 newChildren，将 newChildren[i]与 oldFiber 比较，判断 DOM 节点是否可复用。
 
@@ -217,7 +347,7 @@ ul > p
 
 3.如果不可复用，分两种情况：
 
-    - key 不同导致不可复用，立即跳出整个遍历，第一轮遍历结束。
+    - key 不同导致不可复用，立即跳出整个遍历，第一轮遍历结束.
 
     - key 相同 type 不同导致不可复用，会将 oldFiber 标记为 DELETION，并继续遍历.
 
@@ -273,7 +403,7 @@ ul > p
 
 带着第一轮遍历的结果，我们开始第二轮遍历。
 
-##### 第二轮遍历
+##### 第二轮遍历, 处理剩下的不属于更新的节点(增, 删, 移)
 
 对于第一轮遍历的结果，我们分别讨论：
 
@@ -283,11 +413,11 @@ ul > p
 
 2.newChildren 没遍历完，oldFiber 遍历完
 
-已有的 DOM 节点都复用了，这时还有新加入的节点，意味着本次更新有新节点插入，我们只需要遍历剩下的 newChildren 为生成的 workInProgress fiber 依次标记 Placement。
+已有的 DOM 节点都复用了，这时还有新加入的节点，意味着本次更新有新节点插入，我们只需要遍历剩下的 newChildren 为生成的 workInProgress fiber 依次标记 Placement，处理结束。
 
 3.newChildren 遍历完，oldFiber 没遍历完
 
-意味着本次更新比之前的节点数量少，有节点被删除了。所以需要遍历剩下的 oldFiber，依次标记 Deletion。
+意味着本次更新比之前的节点数量少，有节点被删除了。所以需要遍历剩下的 oldFiber，依次标记 Deletion，处理结束。
 
 4.newChildren 与 oldFiber 都没遍历完
 
