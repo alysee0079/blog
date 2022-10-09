@@ -11,45 +11,29 @@
 
 4.fiber 树更新阶段, 把 current.memoizedState 链表上的所有 Hook 按照顺序克隆到 workInProgress.memoizedState 上, 实现数据的持久化.
 
-#### update 数据结构
-
-```javascript
-// 环状单向链表
-const update = {
-  // 更新内容
-  action,
-  next: null
-}
-```
-
-#### 状态如何保存
-
-更新产生的 update 对象会保存在 queue 中.
-
-不同于 ClassComponent 的实例可以存储数据，对于 FunctionComponent，queue 存储在 FunctionComponent 对应的 fiber 中。
-
-```javascript
-// App组件对应的fiber对象
-const fiber = {
-  // 保存该FunctionComponent对应的Hooks链表
-  memoizedState: null,
-  // 指向App函数
-  stateNode: App
-}
-```
-
-#### kook 数据结构
+#### kook 数据结构(每个 useState 对应一个 hook 对象)
 
 Hook 与 update 类似，都通过链表连接。不过 Hook 是无环的单向链表。
 
 ```javascript
+// hook 保存在 FunctionComponent fiber.memoizedState
+// App 函数对应 fiber
+const fiber = {
+  // 保存该 FunctionComponent 对应的 Hooks 链表
+  memoizedState: null,
+  // 指向 App 函数
+  stateNode: App
+}
+
+// hook 对象
 const hook: Hook = {
   // 保存 hook 对应的 state
   memoizedState: null,
   // 本次更新前该 Fiber 节点的 state，Update 基于该 state 计算更新后的 state
   baseState: null,
+  // 上次更新遗留下的 update(优先级不够)
   baseQueue: null,
-  // 保存update的queue
+  // 保存 update 的 queue
   queue: null,
   // 与下一个Hook连接形成单向无环链表
   next: null
@@ -69,6 +53,7 @@ const hook: Hook = {
 
   有些hook是没有memoizedState的，比如: useContext
 */
+
 ```
 
 > 注意:
@@ -76,22 +61,38 @@ const hook: Hook = {
 > 每个 useState 对应一个 hook 对象。
 > 调用 const [num, updateNum] = useState(0);时 updateNum（即上文介绍的 dispatchAction）产生的 update 保存在 useState 对应的 hook.queue 中。
 
+
+#### update 数据结构(每一个 dispatchAction 都会产生一个 update)
+
+```javascript
+// 环状单向链表
+const update = {
+  lane: lane, // 更新优先级
+  action: action, // 更新内容
+  eagerReducer: null,
+  eagerState: null,
+  next: null // 下一个 update
+}
+// update 保存在 hook.queue.pending
+```
+
 #### 创建 Hook
 
 在 fiber 初次构造阶段, useState 对应源码 mountState, useReducer 对应源码 mountReducer
 
 ```javascript
 function mountState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateAction<S>>] {
-  // 1. 创建hook
+  // 1.创建 hook 并储存到 fiber.memoizedState, 或者拼接到当前处理的 hook 之后
   const hook = mountWorkInProgressHook()
+
   if (typeof initialState === 'function') {
     initialState = initialState()
   }
-  // 2. 初始化hook的属性
+  // 2.初始化hook的值
   // 2.1 设置 hook.memoizedState/hook.baseState
   // 2.2 设置 hook.queue
   hook.memoizedState = hook.baseState = initialState
-  const queue = (hook.queue = {
+  const queue = hook.queue = {
     // update 链表
     pending: null,
     // dispatchAction.bind()的值
@@ -101,7 +102,7 @@ function mountState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateActi
     lastRenderedReducer: basicStateReducer,
     // 上一次 render 时的 state
     lastRenderedState: (initialState: any)
-  })
+  }
   // 2.3 设置 hook.dispatch
   const dispatch: Dispatch<BasicStateAction<S>> = (queue.dispatch = (dispatchAction.bind(null, currentlyRenderingFiber, queue): any))
 
@@ -112,7 +113,7 @@ function mountState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateActi
 
 ```javascript
 function mountReducer<S, I, A>(reducer: (S, A) => S, initialArg: I, init?: I => S): [S, Dispatch<A>] {
-  // 1. 创建hook
+  // 1.创建 hook 并储存到 fiber.memoizedState, 或者拼接到当前处理的 hook 之后
   const hook = mountWorkInProgressHook()
   let initialState
   if (init !== undefined) {
@@ -196,12 +197,25 @@ function dispatchAction<S, A>(fiber: Fiber, queue: UpdateQueue<S, A>, action: A)
     // didScheduleRenderPhaseUpdate: 是否是 render 阶段触发的更新
     didScheduleRenderPhaseUpdateDuringThisPass = didScheduleRenderPhaseUpdate = true
   } else {
-    // 性能优化
-    /*
+   // 性能优化
+   /*
       下面这个if判断, 能保证当前创建的update, 是`queue.pending`中第一个`update`.
       发起更新之后fiber.lanes会被改动(可以回顾`fiber 树构造(对比更新)`章节),
-      如果`fiber.lanes && alternate.lanes`没有被改动, 自然就是首个update
-    */
+      如果`fiber.lanes && alternate.lanes`没有被改动, 自然就是首个update.
+   */
+   /*
+      fiber.lanes保存fiber上存在的update的优先级.
+
+      fiber.lanes === NoLanes意味着fiber上不存在update.
+
+      我们已经知道，通过update计算state发生在声明阶段，这是因为该hook上可能存在多个不同优先级的update，最终state的值由多个update共同决定.
+
+      但是当fiber上不存在update，则调用阶段创建的update为该hook上第一个update，在声明阶段计算state时也只依赖于该update，完全不需要进入声明阶段再计算state.
+
+      这样做的好处是：如果计算出的state与该hook之前保存的state一致，那么完全不需要开启一次调度(不会执行更新 hook 逻辑), 即使计算出的state与该hook之前保存的state不一致，
+
+      在声明阶段也可以直接使用调用阶段已经计算出的state.
+   */
     if (fiber.lanes === NoLanes && (alternate === null || alternate.lanes === NoLanes)) {
       // The queue is currently empty, which means we can eagerly compute the
       // next state before entering the render phase. If the new state is the
@@ -271,7 +285,7 @@ function updateState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateAct
 
 ```javascript
 function updateReducer<S, I, A>(reducer: (S, A) => S, initialArg: I, init?: I => S): [S, Dispatch<A>] {
-  // 1. 获取workInProgressHook对象
+  // 1.创建 hook 并储存到 fiber.memoizedState, 或者拼接到当前处理的 hook 之后
   const hook = updateWorkInProgressHook()
   const queue = hook.queue
   queue.lastRenderedReducer = reducer
@@ -369,6 +383,84 @@ function updateReducer<S, I, A>(reducer: (S, A) => S, initialArg: I, init?: I =>
 updateReducer 函数, 代码相对较长, 但是逻辑分明:
 
 1.调用 updateWorkInProgressHook 获取 workInProgressHook 对象.
+```javascript
+function updateWorkInProgressHook() {
+  // This function is used both for updates and for re-renders triggered by a
+  // render phase update. It assumes there is either a current hook we can
+  // clone, or a work-in-progress hook from a previous render pass that we can
+  // use as a base. When we reach the end of the base list, we must switch to
+  // the dispatcher used for mounts.
+
+  // 1. 移动 currentHook 指针
+
+  // 下一个要处理的 current hook
+  var nextCurrentHook;
+
+  // currentHook: current.memoizedState
+  // currentlyRenderingFiber$1: 当前正在构造的 fiber, 等同于 workInProgress
+  if (currentHook === null) {
+    var current = currentlyRenderingFiber$1.alternate;
+
+    if (current !== null) {
+      // 如果 current.memoizedState 没有则从 workInProgress.alternate 获取 memoizedState 并储存到下次要处理的 hook
+      nextCurrentHook = current.memoizedState;
+    } else {
+      nextCurrentHook = null;
+    }
+  } else {
+    // 如果上次 currentHook 存在, 获取它的下一个 hook(指针移动)
+    nextCurrentHook = currentHook.next;
+  }
+ 
+  // 2. 移动 workInProgressHook 指针
+  var nextWorkInProgressHook;
+
+  // workInProgressHook: workInProgress.memoizedState
+  if (workInProgressHook === null) {
+    nextWorkInProgressHook = currentlyRenderingFiber$1.memoizedState;
+  } else {
+    // workInProgressHook 指针移动
+    nextWorkInProgressHook = workInProgressHook.next; // next = null
+  }
+
+  if (nextWorkInProgressHook !== null) {
+    // There's already a work-in-progress. Reuse it.
+    workInProgressHook = nextWorkInProgressHook;
+    nextWorkInProgressHook = workInProgressHook.next;
+    currentHook = nextCurrentHook;
+  } else {
+    // renderWithHooks 阶段会重置 workInProgress.memoizedState = null, 所以初始化更新时会复用 current 的 memoizedState
+    // 将 current.memoizedState 按照顺序克隆到 workInProgress.memoizedState 中
+    // Clone from the current hook.
+    if (!(nextCurrentHook !== null)) {
+      {
+        throw Error( "Rendered more hooks than during the previous render." );
+      }
+    }
+
+    // 更新当前处理的 current hook
+    currentHook = nextCurrentHook;
+    // 3. 克隆currentHook作为新的workInProgressHook.
+    var newHook = {
+      memoizedState: currentHook.memoizedState,
+      baseState: currentHook.baseState,
+      baseQueue: currentHook.baseQueue,
+      queue: currentHook.queue,
+      next: null // 初始化为 null, 保证后续更新都要从 current 克隆
+    };
+
+    if (workInProgressHook === null) {
+      // This is the first hook in the list.
+      currentlyRenderingFiber$1.memoizedState = workInProgressHook = newHook;
+    } else {
+      // Append to the end of the list.
+      workInProgressHook = workInProgressHook.next = newHook;
+    }
+  }
+
+  return workInProgressHook;
+}
+```
 
 2.链表拼接: 将 hook.queue.pending 拼接到 current.baseQueue.
 
