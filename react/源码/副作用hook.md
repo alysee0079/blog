@@ -1,5 +1,6 @@
 # 副作用hook
 
+### useEffect/useLayoutEffect
 #### 创建 Hook
 在 fiber 初次构造阶段, useEffect 对应源码 mountEffect, useLayoutEffect 对应源码 mountLayoutEffect,
 mountEffect 和 mountLayoutEffect 内部都直接调用 mountEffectImpl, 只是参数不同(Passive || Layout).
@@ -396,3 +397,234 @@ function commitMutationEffects(
 ```
 在commitDeletion函数之后, 继续调用unmountHostComponents->commitUnmount, 在commitUnmount中, 执行effect.destroy(), 结束整个闭环.
 
+### useRef
+与其他Hook一样，对于mount与update，useRef对应两个不同dispatcher。
+```javascript
+function mountRef<T>(initialValue: T): {|current: T|} {
+  // 获取当前useRef hook
+  const hook = mountWorkInProgressHook();
+  // 创建ref
+  const ref = {current: initialValue};
+  hook.memoizedState = ref;
+  return ref;
+}
+
+function updateRef<T>(initialValue: T): {|current: T|} {
+  // 获取当前useRef hook
+  const hook = updateWorkInProgressHook();
+  // 返回保存的数据
+  return hook.memoizedState;
+}
+```
+可见，useRef仅仅是返回一个包含current属性的对象
+
+为了验证这个观点，我们再看下React.createRef方法的实现：
+```javascript
+export function createRef(): RefObject {
+  // 每次都创建一个新的对象
+  const refObject = {
+    current: null,
+  };
+  return refObject;
+}
+```
+
+我们知道HostComponent在commit阶段的mutation阶段执行DOM操作, 所以，对应ref的更新也是发生在mutation阶段,
+再进一步，mutation阶段执行DOM操作的依据为effectTag.所以，对于HostComponent、ClassComponent如果包含ref操作，那么也会赋值相应的effectTag.
+```javascript
+export const Placement = /*                    */ 0b0000000000000010;
+export const Update = /*                       */ 0b0000000000000100;
+export const Deletion = /*                     */ 0b0000000000001000;
+export const Ref = /*                          */ 0b0000000010000000;
+```
+
+所以，ref的工作流程可以分为两部分：
+  - render阶段为含有ref属性的fiber添加Ref effectTag
+  - commit阶段为包含Ref effectTag的fiber执行对应操作
+
+#### render 阶段
+在render阶段的beginWork与completeWork中有个同名方法markRef用于为含有ref属性的fiber增加Ref effectTag.
+```javascript
+// beginWork 的 markRef(mount)
+function markRef(current: Fiber | null, workInProgress: Fiber) {
+  const ref = workInProgress.ref;
+  // current ref 不存在或者和本次不同
+  if (
+    (current === null && ref !== null) ||
+    (current !== null && current.ref !== ref)
+  ) {
+    // Schedule a Ref effect(update)
+    workInProgress.effectTag |= Ref;
+  }
+}
+// completeWork 的 markRef
+function markRef$1(workInProgress: Fiber) {
+  workInProgress.effectTag |= Ref;
+}
+```
+组件对应fiber被赋值Ref effectTag需要满足的条件：
+  - fiber类型为HostComponent、ClassComponent、ScopeComponent
+  - 对于 mount，workInProgress.ref !== null，即存在ref属性
+  - 对于 update，current.ref !== workInProgress.ref，即ref属性改变
+
+#### commit阶段
+
+在commit阶段的mutation阶段中，对于ref属性改变的情况，需要先移除之前的ref
+```javascript
+function commitMutationEffects(root: FiberRoot, renderPriorityLevel) {
+  while (nextEffect !== null) {
+
+    const effectTag = nextEffect.effectTag;
+    // ...
+
+    if (effectTag & Ref) {
+      const current = nextEffect.alternate;
+      if (current !== null) {
+        // 移除之前的ref(mount 阶段不会触发)
+        commitDetachRef(current);
+      }
+    }
+    // ...
+  }
+  // ...
+}
+
+function commitDetachRef(current: Fiber) {
+  const currentRef = current.ref;
+  if (currentRef !== null) {
+    if (typeof currentRef === 'function') {
+      // function类型ref，调用他，传参为null
+      currentRef(null);
+    } else {
+      // 对象类型ref，current赋值为null
+      currentRef.current = null;
+    }
+  }
+}
+```
+接下来，在 mutation阶段，对于Deletion effectTag 的 fiber（对应需要删除的DOM节点），需要递归他的子树，对子孙 fiber 的 ref 执行类似 commitDetachRef 的操作.
+
+对于Deletion effectTag的fiber，会执行commitDeletion:
+在commitDeletion——unmountHostComponents——commitUnmount——ClassComponent | HostComponent类型case中调用的safelyDetachRef方法负责执行类似commitDetachRef的操作.
+```javascript
+function safelyDetachRef(current: Fiber) {
+  const ref = current.ref;
+  if (ref !== null) {
+    if (typeof ref === 'function') {
+      try {
+        ref(null);
+      } catch (refError) {
+        captureCommitPhaseError(current, refError);
+      }
+    } else {
+      ref.current = null;
+    }
+  }
+}
+```
+接下来进入 ref 的赋值阶段, commitLayoutEffect 会执行 commitAttachRef（赋值ref）:
+```javascript
+function commitAttachRef(finishedWork: Fiber) {
+  const ref = finishedWork.ref;
+  if (ref !== null) {
+    // 获取ref属性对应的Component实例
+    const instance = finishedWork.stateNode;
+    let instanceToUse;
+    switch (finishedWork.tag) {
+      case HostComponent:
+        instanceToUse = getPublicInstance(instance);
+        break;
+      default:
+        instanceToUse = instance;
+    }
+
+    // 赋值ref
+    if (typeof ref === 'function') {
+      ref(instanceToUse);
+    } else {
+      ref.current = instanceToUse;
+    }
+  }
+}
+```
+
+#### useMemo/useCallback
+mount
+```javascript
+function mountMemo<T>(
+  nextCreate: () => T,
+  deps: Array<mixed> | void | null,
+): T {
+  // 创建并返回当前hook
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  // 计算value
+  const nextValue = nextCreate();
+  // 将value与deps保存在hook.memoizedState
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
+
+function mountCallback<T>(callback: T, deps: Array<mixed> | void | null): T {
+  // 创建并返回当前hook
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  // 将value与deps保存在hook.memoizedState
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+```
+可以看到，与mountCallback这两个唯一的区别是
+  - mountMemo会将回调函数(nextCreate)的执行结果作为value保存
+  - mountCallback会将回调函数作为value保存
+
+update
+```javascript
+function updateMemo<T>(
+  nextCreate: () => T,
+  deps: Array<mixed> | void | null,
+): T {
+  // 返回当前hook
+  const hook = updateWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const prevState = hook.memoizedState;
+
+  if (prevState !== null) {
+    if (nextDeps !== null) {
+      const prevDeps: Array<mixed> | null = prevState[1];
+      // 判断update前后value是否变化
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        // 未变化
+        return prevState[0];
+      }
+    }
+  }
+  // 变化，重新计算value
+  const nextValue = nextCreate();
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
+
+function updateCallback<T>(callback: T, deps: Array<mixed> | void | null): T {
+  // 返回当前hook
+  const hook = updateWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const prevState = hook.memoizedState;
+
+  if (prevState !== null) {
+    if (nextDeps !== null) {
+      const prevDeps: Array<mixed> | null = prevState[1];
+      // 判断update前后value是否变化
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        // 未变化
+        return prevState[0];
+      }
+    }
+  }
+
+  // 变化，将新的callback作为value
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+```
+可见，对于update，这两个hook的唯一区别也是是回调函数本身还是回调函数的执行结果作为value。
