@@ -1,44 +1,18 @@
 # 副作用hook
 
 #### 创建 Hook
-在fiber初次构造阶段, useEffect对应源码mountEffect, useLayoutEffect对应源码mountLayoutEffect
-```javascript
-function mountEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
-  return mountEffectImpl(
-    UpdateEffect | PassiveEffect, // fiberFlags
-    HookPassive, // hookFlags
-    create,
-    deps,
-  );
-}
-
-function mountLayoutEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
-  return mountEffectImpl(
-    UpdateEffect, // fiberFlags
-    HookLayout, // hookFlags
-    create,
-    deps,
-  );
-}
-```
-
-可见mountEffect和mountLayoutEffect内部都直接调用mountEffectImpl, 只是参数不同.
+在 fiber 初次构造阶段, useEffect 对应源码 mountEffect, useLayoutEffect 对应源码 mountLayoutEffect,
+mountEffect 和 mountLayoutEffect 内部都直接调用 mountEffectImpl, 只是参数不同(Passive || Layout).
 ```javascript
 function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
-  // 1. 创建hook
+  // 1. 创建 hook 并储存到 fiber.memoizedState, 或者拼接到当前处理的 hook 之后
   const hook = mountWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
-  // 2. 设置workInProgress的副作用标记
-  currentlyRenderingFiber.flags |= fiberFlags; // fiberFlags 被标记到workInProgress
-  // 2. 创建Effect, 挂载到hook.memoizedState上
+  // 2. 设置 workInProgress的 副作用标记
+  currentlyRenderingFiber.flags |= fiberFlags;
+  // 2. 创建 Effect, 挂载到 hook.memoizedState 上
   hook.memoizedState = pushEffect(
-    HookHasEffect | hookFlags, // hookFlags用于创建effect
+    HookHasEffect | hookFlags, // hookFlags 用于创建 effect
     create,
     undefined,
     nextDeps,
@@ -54,28 +28,32 @@ function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
 //  Passive: Passive, dom 突变前异步触发
 
 function pushEffect(tag, create, destroy, deps) {
-  // 1. 创建effect对象
+  // 1. 创建 effect 对象
   const effect: Effect = {
-    tag,
-    create,
+    tag, // 副作用类型
+    create, // 副作用执行方法
     destroy,
-    deps,
+    deps, // 依赖
     next: (null: any),
   };
   // 2. 把effect对象添加到环形链表末尾
-  let componentUpdateQueue: null | FunctionComponentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
+  var componentUpdateQueue = currentlyRenderingFiber$1.updateQueue;
+
   if (componentUpdateQueue === null) {
-    // 新建 workInProgress.updateQueue 用于挂载effect对象
+    // 新建 updateQueue 用于储存 effect
     componentUpdateQueue = createFunctionComponentUpdateQueue();
-    currentlyRenderingFiber.updateQueue = (componentUpdateQueue: any);
-    // updateQueue.lastEffect是一个环形链表
+    // 将 effect 联保保存到 fiber.updateQueue
+    currentlyRenderingFiber$1.updateQueue = componentUpdateQueue;
+     // updateQueue.lastEffect 是一个环形链表
     componentUpdateQueue.lastEffect = effect.next = effect;
   } else {
-    const lastEffect = componentUpdateQueue.lastEffect;
+    var lastEffect = componentUpdateQueue.lastEffect;
+
     if (lastEffect === null) {
       componentUpdateQueue.lastEffect = effect.next = effect;
     } else {
-      const firstEffect = lastEffect.next;
+      // 拼接 effect 到队尾, 并将 lastEffect 指向这个 effect
+      var firstEffect = lastEffect.next;
       lastEffect.next = effect;
       effect.next = firstEffect;
       componentUpdateQueue.lastEffect = effect;
