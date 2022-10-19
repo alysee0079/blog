@@ -1,11 +1,9 @@
 # reconciler 运行流程
 
 #### 输入(scheduleUpdateOnFiber)
-```javascript
 在ReactFiberWorkLoop.js中, 承接输入的函数只有scheduleUpdateOnFiber源码地址.
 在react-reconciler对外暴露的 api 函数中, 只要涉及到需要改变 fiber 的操作(无论是首次渲染或后续更新操作),
 最后都会间接调用scheduleUpdateOnFiber, 所以scheduleUpdateOnFiber函数是输入链路中的必经之路.
-```
 
 ```javascript
 // 唯一接收输入信号的函数
@@ -21,11 +19,53 @@ export function scheduleUpdateOnFiber(fiber: Fiber, lane: Lane, eventTime: numbe
       // 后续的更新
       // 进入第2阶段, 注册调度任务, 经过`Scheduler`包的调度, 间接进行`fiber构造`
       ensureRootIsScheduled(root, eventTime)
+
+      // 执行上下文为空主动调用 flushSyncCallbackQueue, 直接进入fiber树构造循环(无需再次等待scheduler调度) 
+      if (executionContext === NoContext) {
+        flushSyncCallbackQueue(); // flushSyncCallbackQueueImpl
+      }
     }
   } else {
     // concurrent模式
     // 无论是否初次更新, 都正常进入第2阶段, 注册调度任务, 经过`Scheduler`包的调度, 间接进行`fiber构造`
     ensureRootIsScheduled(root, eventTime)
+  }
+}
+
+function flushSyncCallbackQueueImpl() {
+  if (!isFlushingSyncQueue && syncQueue !== null) {
+    // Prevent re-entrancy.
+    isFlushingSyncQueue = true;
+    var i = 0;
+
+    {
+      try {
+        var _isSync2 = true;
+        var _queue = syncQueue; // 保存 performSyncWorkOnRoot
+        // ImmediatePriority 立即执行优先级
+        runWithPriority$1(ImmediatePriority$1, function () {
+          for (; i < _queue.length; i++) {
+            var callback = _queue[i];
+
+            do {
+              callback = callback(_isSync2); // 执行 performSyncWorkOnRoot
+            } while (callback !== null);
+          }
+        });
+        syncQueue = null;
+      } catch (error) {
+        // If something throws, leave the remaining callbacks on the queue.
+        if (syncQueue !== null) {
+          syncQueue = syncQueue.slice(i + 1);
+        } // Resume flushing in the next tick
+
+
+        Scheduler_scheduleCallback(Scheduler_ImmediatePriority, flushSyncCallbackQueue);
+        throw error;
+      } finally {
+        isFlushingSyncQueue = false;
+      }
+    }
   }
 }
 ```
