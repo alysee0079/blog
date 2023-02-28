@@ -9,18 +9,14 @@ class MPromise {
     this.onRejectedCallbacks = []
 
     this.resolve = value => {
-      if (this.status === 'pending') {
-        this.value = value
-        this.status = 'fulfilled'
-        this.onFulfilledCallbacks.forEach(item => item(value))
-      }
+      this.value = value
+      this.status = 'fulfilled'
+      this.onFulfilledCallbacks.forEach(item => item(value))
     }
     this.reject = reason => {
-      if (this.status === 'pending') {
-        this.reason = reason
-        this.status = 'rejected'
-        this.onRejectedCallbacks.forEach(item => item(reason))
-      }
+      this.reason = reason
+      this.status = 'rejected'
+      this.onRejectedCallbacks.forEach(item => item(reason))
     }
 
     try {
@@ -32,19 +28,53 @@ class MPromise {
 
   then = (onFulfilled, onRejected) => {
     if (this.status === 'pending') {
-      this.onFulfilledCallbacks.push(onFulfilled)
-      this.onRejectedCallbacks.push(onRejected)
+      return new MPromise((resolve, reject) => {
+        this.onFulfilledCallbacks.push(() => {
+          let x = onFulfilled(this.value)
+          x instanceof MPromise ? x.then((resolve, reject)) : resolve(x)
+        })
+        this.onRejectedCallbacks.push(() => {
+          let x = onRejected(this.reason)
+          x instanceof MPromise ? x.then((resolve, reject)) : resolve(x)
+        })
+      })
     }
+    if (this.status === 'fulfilled') {
+      return new MPromise((resolve, reject) => {
+        try {
+          let x = onFulfilled(this.value)
+          x instanceof MPromise ? x.then((resolve, reject)) : resolve(x)
+        } catch (error) {
+          reject(error)
+        }
+      })
+    }
+    if (this.status === 'rejected') {
+      return new MPromise((resolve, reject) => {
+        try {
+          let x = onRejected(this.reason)
+          x instanceof MPromise ? x.then((resolve, reject)) : resolve(x)
+        } catch (error) {
+          reject(error)
+        }
+      })
+    }
+  }
+
+  catch = fn => {
+    return this.then(null, fn)
   }
 }
 
 const mp = new MPromise((resolve, reject) => {
   setTimeout(() => {
-    resolve(123)
-  }, 0)
+    reject(456)
+  }, 1000)
 })
 
 mp.then(res => {
   console.log(res)
+}).catch(r => {
+  console.log(r)
 })
 ```
