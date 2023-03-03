@@ -122,30 +122,31 @@ beginWork(current, unitOfWork, subtreeRenderLanes)(源码地址)针对所有的 
 
 updateXXX 函数(如: updateHostRoot, updateClassComponent 等)虽然 case 较多, 但是主要逻辑可以概括为 3 个步骤:
 
-1.根据 fiber.pendingProps, fiber.updateQueue 等输入数据状态, 计算 fiber.memoizedState 作为输出状态
+- 根据 fiber.pendingProps, fiber.updateQueue 等输入数据状态, 计算 fiber.memoizedState 作为输出状态
 
-2.获取下级 ReactElement 对象
+- 获取下级 ReactElement 对象
 
-    1.class 类型的 fiber 节点
+  1. class 类型的 fiber 节点
 
-    - 构建 React.Component 实例
-    - 把新实例挂载到 fiber.stateNode 上
-    - 执行 render 之前的生命周期函数
-    - 执行 render 方法, 获取下级 reactElement
-    - 根据实际情况, 设置 fiber.flags
+     - 构建 React.Component 实例
 
-    2.function 类型的 fiber 节点
+     - 把新实例挂载到 fiber.stateNode 上
+     - 执行 render 之前的生命周期函数
+     - 执行 render 方法, 获取下级 reactElement
+     - 根据实际情况, 设置 fiber.flags
 
-    - 执行 function, 获取下级 reactElement
-    - 根据实际情况, 设置fiber.flags
+  2. function 类型的 fiber 节点
 
-    3.HostComponent 类型(如: div, span, button 等)的 fiber 节点
+     - 执行 function, 获取下级 reactElement
+     - 根据实际情况, 设置 fiber.flags
 
-    - pendingProps.children作为下级reactElement
-    - 如果下级节点是文本节点,则设置下级节点为 null. 准备进入completeUnitOfWork阶段
-    - 根据实际情况, 设置fiber.flags
+  3. HostComponent 类型(如: div, span, button 等)的 fiber 节点
 
-3.根据 ReactElement 对象, 调用 reconcileChildren 生成 Fiber 子节点(只生成次级子节点)
+     - pendingProps.children 作为下级 reactElement
+     - 如果下级节点是文本节点,则设置下级节点为 null. 准备进入 completeUnitOfWork 阶段
+     - 根据实际情况, 设置 fiber.flags
+
+- 根据 ReactElement 对象, 调用 reconcileChildren 生成 Fiber 子节点(只生成次级子节点)
 
 - 根据实际情况, 设置 fiber.flags
 
