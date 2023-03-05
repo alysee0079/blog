@@ -329,11 +329,11 @@ function flushPassiveEffectsImpl() {
 
 其核心逻辑:
 
-1.遍历 pendingPassiveHookEffectsUnmount 中的所有 effect, 调用 effect.destroy().
+1. 遍历 pendingPassiveHookEffectsUnmount 中的所有 effect, 调用 effect.destroy().
 
 - 同时清空 pendingPassiveHookEffectsUnmount
 
-  2.遍历 pendingPassiveHookEffectsMount 中的所有 effect, 调用 effect.create(), 并更新 effect.destroy.
+2. 遍历 pendingPassiveHookEffectsMount 中的所有 effect, 调用 effect.create(), 并更新 effect.destroy.
 
 - 同时清空 pendingPassiveHookEffectsMount
 

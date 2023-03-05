@@ -147,7 +147,13 @@ function commitRootImpl(root, renderPriorityLevel) {
 
 #### commitBeforeMutationEffects
 
-第一阶段: dom 变更之前, 处理副作用队列中带有 Snapshot, Passive 标记的 fiber 节点.
+第一阶段:
+
+1. 处理 DOM 节点渲染/删除后的 autoFocus、blur 逻辑。
+
+2. 调用 getSnapshotBeforeUpdate 生命周期钩子。
+
+3. 调度 useEffect
 
 ```javascript
 function commitBeforeMutationEffects() {
@@ -330,7 +336,12 @@ function commitWork(current, finishedWork) {
 
 #### commitLayoutEffects
 
-第三阶段: dom 变更后, 处理副作用队列中带有 Update, Callback, Ref 标记的 fiber 节点.
+第三阶段:
+
+1. commitLayoutEffectOnFiber（调用生命周期钩子和 hook 相关操作）
+2. commitAttachRef（赋值 ref）
+
+#
 
 ```javascript
 function commitLayoutEffects(root, committedLanes) {
