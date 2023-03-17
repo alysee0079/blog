@@ -38,6 +38,7 @@
 Cache-Control:
 
 - max-age: 设置缓存最大时间,超过时间则请求网络,否则从缓存中获取资源,优先级高于 Expires.
+  - max-age=0: 走协商缓存
 - s-max-age: 设置 public(CDN)缓存最大时间,优先级高于 max-age
 - private: 只能被浏览器缓存
 - public: 允许被代理服务器缓存
